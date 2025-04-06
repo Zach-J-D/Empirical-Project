@@ -1,1 +1,27 @@
-```
+---
+title: 'TBD'
+format:
+    pdf:
+        toc: true
+        fontsize: 10pt
+        geometry: margin=0.6in
+---
+
+```{python}
+
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+wages_path = Path('Data') / 'wages.csv'
+wages_df = pd.read_csv(wages_path)
+wages_df['Date'] = pd.to_datetime(wages_df['Date']).dt.to_period('M')
+
+rates_path = Path('Data') / 'interest_rates.csv'
+rates_df = pd.read_csv(rates_path)
+rates_df['Date'] = pd.to_datetime(rates_df['Date']).dt.to_period('M')
+
+test_df = pd.merge(wages_df, rates_df, on = ['Date'])
+
+
+
