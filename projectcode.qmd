@@ -12,16 +12,50 @@ format:
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from decimal import Decimal
+
 
 wages_path = Path('Data') / 'wages.csv'
 wages_df = pd.read_csv(wages_path)
-wages_df['Date'] = pd.to_datetime(wages_df['Date']).dt.to_period('M')
+
+wages_df['Date'] = pd.to_datetime(wages_df['Date'], format = 'mixed')
+wages_df.set_index('Date', inplace = True)
+quarterly_wages_df = wages_df.resample('QE-MAR').mean()
+quarterly_wages_df.index = quarterly_wages_df.index.to_period('Q')
+
+
 
 rates_path = Path('Data') / 'interest_rates.csv'
 rates_df = pd.read_csv(rates_path)
-rates_df['Date'] = pd.to_datetime(rates_df['Date']).dt.to_period('M')
 
-test_df = pd.merge(wages_df, rates_df, on = ['Date'])
+rates_df['Date'] = pd.to_datetime(rates_df['Date'], format = 'mixed')
+rates_df.set_index('Date', inplace = True)
+quarterly_rates_df = rates_df.resample('QE-MAR').last()
+quarterly_rates_df.index = quarterly_rates_df.index.to_period('Q')
+
+first_df = pd.merge(quarterly_wages_df, quarterly_rates_df, on = ['Date'])
+
+
+def create_df(dataset, column = 'Date', folder = 'Data'):
+    dataset_path = Path(folder) / dataset
+    try:
+        new_df = pd.read_csv(dataset_path)
+    except FileNotFoundError:
+        print(f'File {dataset} not found in folder {folder}')
+    if column in new_df.columns:
+        new_df[column] = pd.PeriodIndex((new_df[column].str.replace(' ', '-')), freq = 'Q')
+    return new_df
+
+inflation_df = create_df('inflation.csv')
+
+real_variables_df = pd.merge(first_df, inflation_df, on = ['Date'])
+
+real_variables_df['Real Wage Growth(%)'] = (real_variables_df['Wage Growth (%)'] - real_variables_df['Inflation(%)'])
+
+real_variables_df['Real Interest Rate(%)'] = (real_variables_df['Quarterly Bank Rate(%)'] - real_variables_df['Inflation(%)'])
+
+real_variables_df
+```
 
 
 
