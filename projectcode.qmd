@@ -13,11 +13,13 @@ format:
 
 import numpy as np
 import pandas as pd
+
 from pathlib import Path
 import matplotlib as plt 
+from functools import reduce
+
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools import add_constant
-from functools import reduce
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
@@ -101,7 +103,7 @@ ols_regression_df = analysis_df.drop('Date', axis = 1)
 # Catergorising my variables and ensuring the columns exist
 
 dep_var = 'Wage Growth(%)'
-indep_var = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)', 'Output per Worker Change(%)', 'OECD Economic Growth(%)', 'Business Investment Growth(%)']
+indep_var = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)', 'Output per Hour Growth(%)', 'OECD Economic Growth(%)', 'Business Investment Growth(%)']
 
 assert dep_var in ols_regression_df.columns, "'Wage Growth(%)' is not recognsied"
 for column in indep_var:
@@ -122,12 +124,105 @@ X = ols_regression_df[indep_var]
 
 ols_regression = OLS(Y, add_constant(X)).fit(cov_type = 'HC1')  
 print(ols_regression.summary())
-ols_regression_df.columns
 
 ```
 
 # Validation Tests
 ```{python}
 
+# Running a heteroskedasticity test 
+
 bp_test = het_breuschpagan(ols_regression.resid, ols_regression.model.exog)
-print('BP results are', bp_test)
+
+# Running a test for correlation amongst the variables
+
+X_with_constant = add_constant(X)
+vif_test = pd.DataFrame()
+vif_test['Variable'] = X_with_constant.columns
+vif_test['VIF'] = [variance_inflation_factor(X_with_constant, i)
+                   for i in range(X_with_constant.shape[1])]
+
+
+print(vif_test)
+print(bp_test)
+
+
+```
+
+# OLS regression with interactions
+
+```{python}
+
+# To have desired interaction variables, need to centre the relevant variables to reduce multicollinearity 
+
+def centre_columns(df, columns):
+    ols_centred_df = ols_regression_df.copy()
+    for column in columns: 
+        if column in ols_centred_df.columns:
+            ols_centred_df[column] = ols_centred_df[column] - ols_centred_df[column].mean()
+        else:
+            print('Column not found')
+    return ols_centred_df
+
+inter_columns = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)']
+
+ols_interaction_df = centre_columns(ols_regression_df, inter_columns)
+
+# Creating the interaction variable 
+
+ols_interaction_df['RoR_unemployment'] = ols_interaction_df['Net Rate of Return(%)'] * ols_interaction_df['Unemployment Rate(%)'] 
+
+ols_interaction_df['Bank_inflation'] = ols_interaction_df['Bank Rate(%)'] * ols_interaction_df['Inflation(%)']
+
+# Editing the independent variable list to include the interaction effect
+
+indep_var_interaction = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)', 'Output per Hour Growth(%)', 'OECD Economic Growth(%)', 'Business Investment Growth(%)', 'RoR_unemployment', 'Bank_inflation']
+
+X_interaction = ols_interaction_df[indep_var_interaction]
+
+# Running the new OLS regression
+
+ols_regression_interaction = OLS(Y, add_constant(X_interaction)).fit(cov_type = 'HC1') 
+print(ols_regression_interaction.summary())
+
+```
+
+# Updated Validation Tests
+```{python}
+
+# Running a heteroskedasticity test 
+
+bp_test_inter = het_breuschpagan(ols_regression_interaction.resid, ols_regression_interaction.model.exog)
+
+# Running a test for correlation amongst the variables
+
+X_with_constant_inter = add_constant(X_interaction)
+vif_test_inter = pd.DataFrame()
+vif_test_inter['Variable'] = X_with_constant_inter.columns
+vif_test_inter['VIF'] = [variance_inflation_factor(X_with_constant_inter, i)
+                   for i in range(X_with_constant_inter.shape[1])]
+
+
+print(vif_test_inter)
+print(bp_test_inter)
+
+
+```
+
+# Cointegration tests
+```{python}
+
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+
+
+johansen_test = coint_johansen(ols_regression_df, det_order = 0, k_ar_diff = 1)
+
+trace_stat = johansen_test.lr1
+eigenvalue_stat = johansen_test.lr2
+
+print(f'Trace statistic: {trace_stat}')
+print(f'Max eigenvalue statistic: {eigenvalue_stat}')
+print(f'Critical value: {johansen_test.cvt}')
+
