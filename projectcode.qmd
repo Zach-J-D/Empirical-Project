@@ -13,15 +13,17 @@ format:
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 
 from pathlib import Path
-import matplotlib as plt 
+import matplotlib.pyplot as plt 
 from functools import reduce
 
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools import add_constant
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+
 
 # Since the wage and interest rate data was monthly, have to adjust it
 # Involves resampling this data into quarterly format for analysis later on
@@ -67,11 +69,9 @@ def create_df(dataset, column = 'Date', folder = 'Data'):
 # Importing the rest of the data into dataframes
 
 inflation_df = create_df('inflation.csv')
-RoR_df = create_df('rate_of_return.csv')
-productivity_df = create_df('productivity.csv')
 unemployment_df = create_df('unemployment.csv')
 OECD_growth_df = create_df('OECD_growth.csv')
-investment_df = create_df('investment_growth.csv')
+gvt_spending_df = create_df('gvt_spending.csv')
 
 
 # Creating a dataframe with real (inflation adjusted) values in for future use 
@@ -86,13 +86,12 @@ real_variables_df
 
 ```
 
-
 # The OLS Regression 
 ```{python}
 
 # First going to gather all dataframes
 
-all_dfs = [first_df, inflation_df, RoR_df, unemployment_df, productivity_df, OECD_growth_df, investment_df]
+all_dfs = [first_df, inflation_df, unemployment_df, gvt_spending_df, OECD_growth_df]
 
 # Then perform a merge on the 'Date' column 
 
@@ -103,7 +102,7 @@ ols_regression_df = analysis_df.drop('Date', axis = 1)
 # Catergorising my variables and ensuring the columns exist
 
 dep_var = 'Wage Growth(%)'
-indep_var = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)', 'Output per Hour Growth(%)', 'OECD Economic Growth(%)', 'Business Investment Growth(%)']
+indep_var = ['Bank Rate(%)', 'Inflation(%)', 'Unemployment Rate(%)', 'OECD Economic Growth(%)', 'Gvt Expenditure Growth(%)']
 
 assert dep_var in ols_regression_df.columns, "'Wage Growth(%)' is not recognsied"
 for column in indep_var:
@@ -127,14 +126,21 @@ print(ols_regression.summary())
 
 ```
 
-# Validation Tests
+## Validation Tests 
+### Heteroskedasticity test
 ```{python}
 
 # Running a heteroskedasticity test 
 
 bp_test = het_breuschpagan(ols_regression.resid, ols_regression.model.exog)
+bp_test
 
-# Running a test for correlation amongst the variables
+```
+
+### Multicollinearity test
+```{python}
+
+# Running a test for multicollnearity
 
 X_with_constant = add_constant(X)
 vif_test = pd.DataFrame()
@@ -143,86 +149,78 @@ vif_test['VIF'] = [variance_inflation_factor(X_with_constant, i)
                    for i in range(X_with_constant.shape[1])]
 
 
-print(vif_test)
-print(bp_test)
+vif_test
+
+```
+
+### Bootstrapping Confidence Intervals
+```{python}
+
+# Setup for bootstrapping, including how many times to repeat the process
+
+B = 3000
+n = len(ols_regression_df)
+
+# Creating an empty list to append to later
+
+results_boot_list = []
+
+# Writing a function that repeats the OLS as many times as specified
+# Then, stores the coefficients
+
+for i in range (B):
+    boot_df = ols_regression_df.sample(n, replace = True)
+    
+    indep_boot = boot_df[indep_var]
+    
+    dep_boot = boot_df[dep_var]
+    
+    ols_boot = OLS(dep_boot, add_constant(indep_boot)).fit()
+    
+    results_boot_list.append(ols_boot.params.values)
+
+
+# The dataframe with the initial bootstrapping results
+
+results_boot_df = pd.DataFrame(results_boot_list, columns = ['const'] + indep_var)
+
+# Getting my confidence intervals from the coefficients
+
+CI_lower = results_boot_df.quantile(0.025)
+CI_upper = results_boot_df.quantile(0.975)
+
+# Table for the data so that the confidence intervals are columns
+
+CI_boot = pd.concat([CI_lower, CI_upper], axis = 1)
+CI_boot.columns = [' Bootstrap 0.025', ' Bootstrap 0.975']
+
+# Getting the confidence intervals from my OLS for comparison
+
+CI_ols = ols_regression.conf_int(alpha = 0.05)
+CI_ols.columns = ['OLS 0.025', 'OLS 0.975']
+
+# Joining the two datasets into one table
+
+CI_merged = pd.concat([CI_boot, CI_ols], axis = 1)
+CI_merged
 
 
 ```
 
-# OLS regression with interactions
+The purpose of the bootstrapping was to estimate a sampling distribution for the regression coefficients without assuming a normal distribution for the residuals. By resampling the dataset and reestimating the OLS, it builds a distribution for the coefficients so I can empirically calculate the confidence intervals and compare them against the ones in the OLS output. This was to test how robust the OLS confidence intervals were.
 
+As seen by the output above, the two sets of confidence intervals are very similar, with 4 of the 5 variables having both the upper and lower bound intervals within tight margins of difference. The largest being the lower bound of OECD Economic growth, which went from 0.218 to 0.3. However, none of the intervals changed in significance since none of the bootstrap contained 0 in their interval, as in the OLS. As such, the statistical significance of the variables in their relationship to wage growth did not change, and the bootstrapping results give credence to the validity of the original OLS output.
+
+### Q-Q plot for normality checks
 ```{python}
 
-# To have desired interaction variables, need to centre the relevant variables to reduce multicollinearity 
+# Plotting a Q-Q plot to test the normality of my residuals
 
-def centre_columns(df, columns):
-    ols_centred_df = ols_regression_df.copy()
-    for column in columns: 
-        if column in ols_centred_df.columns:
-            ols_centred_df[column] = ols_centred_df[column] - ols_centred_df[column].mean()
-        else:
-            print('Column not found')
-    return ols_centred_df
-
-inter_columns = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)']
-
-ols_interaction_df = centre_columns(ols_regression_df, inter_columns)
-
-# Creating the interaction variable 
-
-ols_interaction_df['RoR_unemployment'] = ols_interaction_df['Net Rate of Return(%)'] * ols_interaction_df['Unemployment Rate(%)'] 
-
-ols_interaction_df['Bank_inflation'] = ols_interaction_df['Bank Rate(%)'] * ols_interaction_df['Inflation(%)']
-
-# Editing the independent variable list to include the interaction effect
-
-indep_var_interaction = ['Bank Rate(%)', 'Inflation(%)', 'Net Rate of Return(%)', 'Unemployment Rate(%)', 'Output per Hour Growth(%)', 'OECD Economic Growth(%)', 'Business Investment Growth(%)', 'RoR_unemployment', 'Bank_inflation']
-
-X_interaction = ols_interaction_df[indep_var_interaction]
-
-# Running the new OLS regression
-
-ols_regression_interaction = OLS(Y, add_constant(X_interaction)).fit(cov_type = 'HC1') 
-print(ols_regression_interaction.summary())
-
-```
-
-# Updated Validation Tests
-```{python}
-
-# Running a heteroskedasticity test 
-
-bp_test_inter = het_breuschpagan(ols_regression_interaction.resid, ols_regression_interaction.model.exog)
-
-# Running a test for correlation amongst the variables
-
-X_with_constant_inter = add_constant(X_interaction)
-vif_test_inter = pd.DataFrame()
-vif_test_inter['Variable'] = X_with_constant_inter.columns
-vif_test_inter['VIF'] = [variance_inflation_factor(X_with_constant_inter, i)
-                   for i in range(X_with_constant_inter.shape[1])]
-
-
-print(vif_test_inter)
-print(bp_test_inter)
+sm.qqplot(ols_regression.resid, line='45', fit=True)
+plt.title('Q-Q Plot for the Residuals')
 
 
 ```
 
-# Cointegration tests
-```{python}
-
-import statsmodels.api as sm
-from statsmodels.tsa.stattools import adfuller
-from statsmodels.tsa.vector_ar.vecm import coint_johansen
-
-
-johansen_test = coint_johansen(ols_regression_df, det_order = 0, k_ar_diff = 1)
-
-trace_stat = johansen_test.lr1
-eigenvalue_stat = johansen_test.lr2
-
-print(f'Trace statistic: {trace_stat}')
-print(f'Max eigenvalue statistic: {eigenvalue_stat}')
-print(f'Critical value: {johansen_test.cvt}')
+The output from my Q-Q plot suggests that most of the residuals are normally distributed, as the data hugs the 45 degree line. While there is some deviation with the slightly heavy tails, which I already knew due to the kurtosis value, there's no strong skewness or persisting issues with the distribution. This gives more justification for me to use the OLS regression output to draw conclusions about the variables' causal realtionship with wage growth. 
 
