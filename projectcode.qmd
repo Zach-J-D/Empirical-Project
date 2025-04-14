@@ -1,11 +1,26 @@
 ---
-title: 'TBD'
+title: '21st Century Real Wage Growth in the UK'
 format:
     pdf:
         toc: true
         fontsize: 10pt
         geometry: margin=0.6in
 ---
+# Introduction 
+
+The purpose of this project is examine the relationships between wage growth and other macroeconomic variables in the UK in the 21st Century, and whether or not these relationships are causal.
+
+The variables I have decided to assess are: 
+    - Bank rate
+    - Inflation (CPIH)
+    - Unemployment rate
+    - Total government spending
+    - OECD economic growth (1)
+
+First, I shall take the variables individually and look at their relationship with wage growth, before later moving onto to regression analysis to investigate the possibility of causality.
+
+*(1 - Clarifying that OECD economic growth is designed to act as a representative of foreign demand for both our goods and labour, and how this ultimately effects wages in the UK.)*  
+
 
 # Importing the Data
 ```{python}
@@ -82,9 +97,25 @@ real_variables_df['Real Wage Growth(%)'] = (real_variables_df['Wage Growth(%)'] 
 
 real_variables_df['Real Interest Rate(%)'] = (real_variables_df['Bank Rate(%)'] - real_variables_df['Inflation(%)'])
 
-real_variables_df
+# First going to gather all dataframes
+
+all_dfs = [first_df, inflation_df, unemployment_df, gvt_spending_df, OECD_growth_df]
+
+# Then perform a merge on the 'Date' column 
+
+analysis_df = reduce(lambda left, right: pd.merge(left, right, on = ['Date'], how ='inner'), all_dfs)
+
+analysis_df
 
 ```
+
+All of the data, apart from OECD economic growth, came from the ONS as they have reliable and extensive datasets, while the OECD economic growth data came from the OECD. 
+
+As for the problems I faced in this process, there isn't free UK wage growth data that goes beyond 2000, and the ONS data was monthly whereas most other data collected on economic variables is quarterly or annual. This is a problem for being able to place the data side by side in a dataframe. Hence, I had to adjust the interest rate and wage growth data to a quarterly format. As well as this, almost all of the quarterly data had the date columns in the format YYYY QX, but only the format YYYY-QX is accepted in the pandas PeriodIndex. To deal with this, I wrote a function that sorted through the date columns replacing the blank space with a '-'. 
+
+The final issue was that because the data for government spending and wages starts in 2000, there is no growth data for the first year, so those 2 variables have NaN values for 2000. Having done this, I was able to gather the data all into one dataframe as seen above. 
+
+
 
 # The OLS Regression 
 ```{python}
@@ -126,39 +157,39 @@ print(ols_regression.summary())
 
 ```
 
+The above regression results present some interesting ideas, but before those are discussed, I want to assess the validity of the model and address the issues the results raise. 
+
+First, at first glance we can be confident that the model is a good fit as both the R-squared and adjusted R-squared, 0.776 and 0.763 respectively, are above 0.7 which is often considered a rule of thumb for a good fit. 
+
+Yet, there are potential issues in the test statistics underneath the regressors. The condition number at 59 indicates high multicollinearity, but I will explore this further by calculating variance inflation factors for each of the regressors. The Durbin-Watson statistic, a measure of autocorrelation, is within the acceptable bounds of between 1.5 and 2.5. So there is some mild positive autocorrelation, which means the variables' errors are somewhat related to the errors at previous time periods, but not a degree that violates the assumption of independent error terms. This is very common amongst economic variables in a time series because of the cyclical nature of many economic measures.
+
+The OLS assumption that residuals follow a normal distribution is brought into question, which are assessed by the Omnibus and Jarque-Bera (JB) statistics. Taking alpha = 0.05, the JB p-value is statistically significant at 0.0442, suggesting the residuals are not normally distributed. While the Omnibus p-value is not significant at 0.068. However, in combination with the JB p-value, the 0.068 cannot justify the residuals are normally distributed. The kurtosis value of 4.151 suggests that the residuals have fatter tails, or in other words there are outliers present in the data. This could also account for the doubt in the distribution of the residuals. 
+
+In order to investigate this further to assess to what degree normality is violated, I will provide a Quantile-Quantile (Q-Q) plot to visually examine the distribution of the residuals. Normality being violated can lead to unreliable confidence intervals and p-values, so to counter this I will also bootstrap confidence intervals and compare against the ones in the OLS regression to assess the accuracy.
+
+
 ## Validation Tests 
-### Heteroskedasticity test
+
+### Q-Q plot for normality checks
 ```{python}
 
-# Running a heteroskedasticity test 
+# Plotting a Q-Q plot to test the normality of my residuals
 
-bp_test = het_breuschpagan(ols_regression.resid, ols_regression.model.exog)
-bp_test
+sm.qqplot(ols_regression.resid, line='45', fit=True)
+plt.title('Q-Q Plot for the Residuals')
+
 
 ```
 
-### Multicollinearity test
-```{python}
+The output from my Q-Q plot suggests that most of the residuals are normally distributed, as the data hugs the 45 degree line. While there is some deviation with the slightly heavy tails, which was suggested by the kurtosis value, there's no strong skewness or persisting issues with the distribution. This gives more justification for me to use the OLS regression output to draw conclusions about the variables' causal realtionship with wage growth. 
 
-# Running a test for multicollnearity
-
-X_with_constant = add_constant(X)
-vif_test = pd.DataFrame()
-vif_test['Variable'] = X_with_constant.columns
-vif_test['VIF'] = [variance_inflation_factor(X_with_constant, i)
-                   for i in range(X_with_constant.shape[1])]
-
-
-vif_test
-
-```
 
 ### Bootstrapping Confidence Intervals
 ```{python}
 
 # Setup for bootstrapping, including how many times to repeat the process
 
-B = 3000
+B = 5000
 n = len(ols_regression_df)
 
 # Creating an empty list to append to later
@@ -207,20 +238,41 @@ CI_merged
 
 ```
 
-The purpose of the bootstrapping was to estimate a sampling distribution for the regression coefficients without assuming a normal distribution for the residuals. By resampling the dataset and reestimating the OLS, it builds a distribution for the coefficients so I can empirically calculate the confidence intervals and compare them against the ones in the OLS output. This was to test how robust the OLS confidence intervals were.
+The purpose of the bootstrapping was to estimate a sampling distribution for the regression coefficients without assuming a normal distribution for the residuals. By resampling the dataset and reestimating the OLS, it builds a distribution for the coefficients so I can empirically calculate the confidence intervals and compare them against the ones in the OLS output. This was to test how robust the OLS confidence intervals were in light of the issues with the normality in the distribution of the residuals.
 
-As seen by the output above, the two sets of confidence intervals are very similar, with 4 of the 5 variables having both the upper and lower bound intervals within tight margins of difference. The largest being the lower bound of OECD Economic growth, which went from 0.218 to 0.3. However, none of the intervals changed in significance since none of the bootstrap contained 0 in their interval, as in the OLS. As such, the statistical significance of the variables in their relationship to wage growth did not change, and the bootstrapping results give credence to the validity of the original OLS output.
+As seen by the output above, the two sets of confidence intervals are very similar, with 4 of the 5 variables having both the upper and lower bound intervals within tight margins of difference. The largest being the lower bound of OECD Economic growth, which went from 0.22 to 0.3. However, none of the intervals changed in significance since none of the bootstrapped intervals contained 0 in their interval, as in the OLS. As such, the statistical significance of the variables in their relationship to wage growth did not change, and the bootstrapping results give credence to the validity of the original OLS output. 
 
-### Q-Q plot for normality checks
+### Heteroskedasticity test
 ```{python}
 
-# Plotting a Q-Q plot to test the normality of my residuals
+# Running a heteroskedasticity test 
 
-sm.qqplot(ols_regression.resid, line='45', fit=True)
-plt.title('Q-Q Plot for the Residuals')
-
+bp_test = het_breuschpagan(ols_regression.resid, ols_regression.model.exog)
+bp_test
 
 ```
 
-The output from my Q-Q plot suggests that most of the residuals are normally distributed, as the data hugs the 45 degree line. While there is some deviation with the slightly heavy tails, which I already knew due to the kurtosis value, there's no strong skewness or persisting issues with the distribution. This gives more justification for me to use the OLS regression output to draw conclusions about the variables' causal realtionship with wage growth. 
+This is the Breush-Pagan test for heteroskedasticity. Heteroskedasticity is where the error terms do not have a constant variance, and if found to be present would violate one of the key assumptions of OLS. However, as seen by the p-value of 0.12, there is insufficient evidence to reject the null hypothesis that the error terms' variance are homoskedastic. As such, the assumption is not violated in this model.
 
+
+
+### Multicollinearity test
+```{python}
+
+# Running a test for multicollnearity
+
+X_with_constant = add_constant(X)
+vif_test = pd.DataFrame()
+vif_test['Variable'] = X_with_constant.columns
+vif_test['VIF'] = [variance_inflation_factor(X_with_constant, i)
+                   for i in range(X_with_constant.shape[1])]
+
+
+vif_test
+
+```
+
+Next is calculating the variance inflation factors for the regressors, so that I can check whether multicollinearity is indeed an issue in this model. A value of 1 is no multicollinearity at all, and values above 5 indicate high multicollinearity. This is cause for concern for the reliability of the model as strong correlations between regressors can inflate standard errors and lead to unstable coefficients. In this OLS regression, none of the regressors have a VIF higher than 2, showing that this model does not suffer from problematic multicollinearity, enforcing the reliability of the regression's results. 
+
+
+## Discussion of the OLS Results 
