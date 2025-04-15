@@ -28,6 +28,7 @@ First, I shall take the variables individually and look at their relationship wi
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import statsmodels.api as sm
 
 from pathlib import Path
@@ -41,20 +42,26 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 
 # Since the wage and interest rate data was monthly, have to adjust it
+
 # Involves resampling this data into quarterly format for analysis later on
+
 # For wages, took the mean of the period
 # For interest rates, took the rate at the end of the quarter
 
 wages_path = Path('Data') / 'wages.csv'
 wages_df = pd.read_csv(wages_path)
 wages_df['Date'] = pd.to_datetime(wages_df['Date'], format = 'mixed')
+
 wages_df.set_index('Date', inplace = True)
 quarterly_wages_df = wages_df.resample('QE-MAR').mean()
 quarterly_wages_df.index = quarterly_wages_df.index.to_period('Q')
 
+# Repeating for bank rate
+
 rates_path = Path('Data') / 'interest_rates.csv'
 rates_df = pd.read_csv(rates_path)
 rates_df['Date'] = pd.to_datetime(rates_df['Date'], format = 'mixed')
+
 rates_df.set_index('Date', inplace = True)
 quarterly_rates_df = rates_df.resample('QE-MAR').last()
 quarterly_rates_df.index = quarterly_rates_df.index.to_period('Q')
@@ -65,19 +72,26 @@ first_df = pd.merge(quarterly_wages_df, quarterly_rates_df, on = ['Date'])
 
 
 # Since the rest of the data was quarterly and in a similar format
+
 # Wrote a function that could sort and create the dataframesy
 # Takes file path, reads in data, much of the data was 2000 Q1
+
 # However this isn't recognised and requires 2000-Q1 format instead
 # If data was 2000-Q1, nothing is changed 
 
 def create_df(dataset, column = 'Date', folder = 'Data'):
+    
     dataset_path = Path(folder) / dataset
+    
     try:
         new_df = pd.read_csv(dataset_path)
+    
     except FileNotFoundError:
         print(f'File {dataset} not found in folder {folder}')
+    
     if column in new_df.columns:
         new_df[column] = pd.PeriodIndex((new_df[column].str.replace(' ', '-')), freq = 'Q')
+    
     return new_df
 
 
@@ -88,7 +102,11 @@ unemployment_df = create_df('unemployment.csv')
 OECD_growth_df = create_df('OECD_growth.csv')
 gvt_spending_df = create_df('gvt_spending.csv')
 
+```
 
+
+## Creating DataFrames
+```{python}
 # Creating a dataframe with real (inflation adjusted) values in for future use 
 
 real_variables_df = pd.merge(first_df, inflation_df, on = ['Date'])
@@ -105,6 +123,8 @@ all_dfs = [first_df, inflation_df, unemployment_df, gvt_spending_df, OECD_growth
 
 analysis_df = reduce(lambda left, right: pd.merge(left, right, on = ['Date'], how ='inner'), all_dfs)
 
+analysis_df = analysis_df.dropna()
+
 analysis_df
 
 ```
@@ -115,18 +135,91 @@ As for the problems I faced in this process, there isn't free UK wage growth dat
 
 The final issue was that because the data for government spending and wages starts in 2000, there is no growth data for the first year, so those 2 variables have NaN values for 2000. Having done this, I was able to gather the data all into one dataframe as seen above. 
 
+# How Wage Growth Moves With Key Variables
+
+## Inflation 
+
+```{python}
+
+# Setting the size of the plot
+
+plt.figure(figsize = (12, 10))
+
+# Using seaborn to plot a scatterplot with a line of best fit
+
+sns.regplot(
+    x = analysis_df['Inflation(%)'],
+    y = analysis_df['Wage Growth(%)'],
+    line_kws = {'color': 'red', 'linewidth': 1.5}
+)
+
+# Giving it a title
+
+plt.title('Wage Growth vs Inflation')
+plt.show()
+
+# Calculating the pearsons correlation coefficient
+
+inflation_corr = analysis_df['Wage Growth(%)'].corr(analysis_df['Inflation(%)'])
+
+# Printing the coefficient 
+
+print(f'The pearsons correlation coefficient is {inflation_corr}')
+
+
+```
+
+
+## Real Interest Rates
+```{python}
+
+plt.figure(figsize = (10, 8))
+
+# Converting 'Date' column to datetime so it can plotted
+
+real_variables_df['Date'] = pd.PeriodIndex(real_variables_df['Date'], freq = 'Q').to_timestamp()
+
+# Looping through the columns in the dataframe to plot both time series together
+
+for col in ['Real Wage Growth(%)', 'Real Interest Rate(%)']:
+    plt.plot(real_variables_df['Date'], real_variables_df[col]\
+        , label = col)
+
+# Customising the graph
+
+plt.title('Real Wage Growth and Real Interest Rates')
+plt.xlabel('Year')
+plt.ylabel('(%)')
+plt.legend()
+plt.axhline(0, color = 'black', linestyle = '--')
+plt.show()
+
+```
+
+# Comparing the Phillips Curve to the Data
+```{python}
+
+plt.figure(figsize = (10, 8))
+
+# Using seaborn to plot a scatterplot with a line of best fit
+
+sns.regplot(
+    x = analysis_df['Unemployment Rate(%)'],
+    y = analysis_df['Inflation(%)'],
+    line_kws = {'color': 'red'}
+)
+
+# Giving it a title
+
+plt.title('Modelling the Phillips Curve (In Theory)')
+plt.show()
+
+
+```
 
 
 # The OLS Regression 
 ```{python}
-
-# First going to gather all dataframes
-
-all_dfs = [first_df, inflation_df, unemployment_df, gvt_spending_df, OECD_growth_df]
-
-# Then perform a merge on the 'Date' column 
-
-analysis_df = reduce(lambda left, right: pd.merge(left, right, on = ['Date'], how ='inner'), all_dfs)
 
 ols_regression_df = analysis_df.drop('Date', axis = 1)
 
