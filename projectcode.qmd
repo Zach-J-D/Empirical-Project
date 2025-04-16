@@ -282,7 +282,7 @@ The output from my Q-Q plot suggests that most of the residuals are normally dis
 
 # Setup for bootstrapping, including how many times to repeat the process
 
-B = 5000
+B = 1000
 n = len(ols_regression_df)
 
 # Creating an empty list to append to later
@@ -369,3 +369,55 @@ Next is calculating the variance inflation factors for the regressors, so that I
 
 
 ## Discussion of the OLS Results 
+
+# VECM
+## First Differencing and ADF Tests
+```{python}
+
+stationary_df = ols_regression_df.copy()
+stationary_df = stationary_df.diff().dropna()
+
+def adf_test(df):
+    adf_results = {}
+    for column in stationary_df.columns:
+        result = adfuller(stationary_df[column].dropna(), maxlag = 4)
+        adf_results[column] = {
+            'ADF Statistic': result[0],
+            'p-value': result[1],
+            'Lags Used': result[2],
+            'Number of Observations Used': result[3],
+            'Critical Values': result[4]
+        }
+        
+    return adf_results
+
+
+
+adf_results = adf_test(stationary_df)
+
+for column, result in adf_results.items():
+    print(f"\nResults for {column}:")
+    print(f"ADF Statistic: {result['ADF Statistic']}")
+    print(f"p-value: {result['p-value']}")
+    print(f"Lags Used: {result['Lags Used']}")
+    print(f"Critical Values: {result['Critical Values']}")
+```
+
+## Running Cointegration Test
+```{python}
+
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+
+lag_length = 3  
+det_order = 0  
+
+# Run the Johansen Cointegration test
+johansen_test = coint_johansen(stationary_df, det_order, lag_length)
+
+# Print the trace statistics and critical values
+print("Trace Statistic:")
+print(johansen_test.lr1) 
+print("\nCritical Values (90%, 95%, 99%):")
+print(johansen_test.cvt)  
+
+```
