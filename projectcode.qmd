@@ -196,26 +196,6 @@ plt.show()
 
 ```
 
-# Comparing the Phillips Curve to the Data
-```{python}
-
-plt.figure(figsize = (10, 8))
-
-# Using seaborn to plot a scatterplot with a line of best fit
-
-sns.regplot(
-    x = analysis_df['Unemployment Rate(%)'],
-    y = analysis_df['Inflation(%)'],
-    line_kws = {'color': 'red'}
-)
-
-# Giving it a title
-
-plt.title('Modelling the Phillips Curve (In Theory)')
-plt.show()
-
-```
-
 
 # The OLS Regression 
 ```{python}
@@ -225,7 +205,8 @@ plt.show()
 # This is because the data starts at 2000 so there's obviously no data for 
 # the first year's quarters
 
-ols_regression_df = ols_regression_df.dropna()
+ols_regression_df = analysis_df.copy()
+ols_regression_df.dropna()
 
 ols_regression_df = analysis_df.drop('Date', axis = 1)
 
@@ -372,19 +353,31 @@ Next is calculating the variance inflation factors for the regressors, so that I
 
 ## Discussion of the OLS Results 
 
+
+
+
 # VECM
 ## First Differencing and ADF Tests
 ```{python}
 
 from statsmodels.tsa.stattools import adfuller
 
+# Creating a new dataframe to use for first-differencing and VECM tests
+
 vecm_df = ols_regression_df.copy()
 stationary_df = vecm_df.diff().dropna()
 
+# Runs the ADF(Augmented Dickey-Fuller) test on every column
+
+# Returns the results into a previously empty list
+# Purpose is to make sure data is stationary after first-differencing
+
 def adf_test(df):
     adf_results = {}
-    for column in stationary_df.columns:
-        result = adfuller(stationary_df[column].dropna(), maxlag = 5)
+    
+    for column in df.columns:
+        result = adfuller(df[column].dropna(), maxlag = 5)
+        
         adf_results[column] = {
             'ADF Statistic': result[0],
             'p-value': result[1],
@@ -395,15 +388,22 @@ def adf_test(df):
         
     return adf_results
 
-
+# Running it on the stationary dataframe
 
 adf_results = adf_test(stationary_df)
 
+# Printing out the results from the ADF test 
+# Can inspect lags used and the relevant t-stats and p-values
+
 for column, result in adf_results.items():
     print(f"\nResults for {column}:")
+    
     print(f"ADF Statistic: {result['ADF Statistic']}")
+    
     print(f"p-value: {result['p-value']}")
+    
     print(f"Lags Used: {result['Lags Used']}")
+    
     print(f"Critical Values: {result['Critical Values']}")
 ```
 
@@ -412,9 +412,14 @@ for column, result in adf_results.items():
 
 from statsmodels.tsa.vector_ar.vecm import *
 
+# Running a cointegration test to make sure VECM is appropriate
+
 coint_rank_test = select_coint_rank(vecm_df, 0, 4)
 
+# Prints out a table with p-values and t-stats
+
 coint_rank_test.summary()
+
 
 ```
 
@@ -422,13 +427,16 @@ coint_rank_test.summary()
 
 ```{python}
 
+# In case I want to do forecasting and 
+
 stationary_df['Date'] = analysis_df['Date']
 stationary_df.set_index('Date', inplace = True)
+
+# Specifying the models parameters and fitting the model, and printing out the results
 
 vecm_model = VECM(stationary_df, deterministic = 'co', k_ar_diff = 3, coint_rank = 2)
 
 vecm_results = vecm_model.fit()
-vecm_results.beta[:, 0]
 
 print(vecm_results.summary())
 
@@ -441,6 +449,9 @@ print(vecm_results.summary())
 
 from statsmodels.graphics.tsaplots import plot_acf
 from scipy import stats
+from statsmodels.tsa.stattools import grangercausalitytests
+
+# Taking the residuals from the wage equation as its the one of interest
 
 wage_residuals = vecm_results.resid[:, 0]
 
@@ -448,10 +459,31 @@ wage_residuals = vecm_results.resid[:, 0]
 plot_acf(wage_residuals)
 plt.show()
 
-
+# Running a Shapiro-Wilk test for normality in the residuals
+# Jarque-Bera test required exog and I have none since VECM takes all variables as endog
 
 stat, p_value = stats.shapiro(wage_residuals)
 print(f"Shapiro-Wilk Test: Statistics = {stat}, p-value = {p_value}")
+
+
+```
+
+### Granger-Causality
+```{python}
+
+# Setting max lags to be used
+
+max_lag = 4
+
+# Running a loop through every column 
+# Now can individually examine the causal relationships
+
+for col in stationary_df.columns:
+    if col != 'Wage Growth':
+        
+        print(f'\nTesting if {col} Granger-causes Wage Growth:')
+        
+        grangercausalitytests(stationary_df[['Wage Growth(%)', col]], maxlag = max_lag)
 
 
 ```
@@ -460,19 +492,30 @@ print(f"Shapiro-Wilk Test: Statistics = {stat}, p-value = {p_value}")
 
 ```{python}
 
-num_periods = 25
+# Setting number of years going to examine for the shock
+
+num_periods = 12
+
+ir = vecm_results.irf(periods = num_periods)
+
+# Only want the first row of IRFs since that's the wage growth row
 
 first_row_irfs = ir.irfs[:, 0, :] 
 
+# Setting up the plot and the names
 
-fig, ax = plt.subplots(figsize=(12, 8))
+fig, ax = plt.subplots(figsize = (12, 8))
 
 var_names = ['Wage Growth', 'Bank Rate', 'Inflation', 'Unemployment', 'OECD Economic Growth', 'Gvt Spending Growth' ]
+
+# Loops through columns and their shocks to wage growth
 
 for i in range(first_row_irfs.shape[1]):
     
     ax.plot(first_row_irfs[:, i], label = f'Shock to variable {var_names[i]}')
 
+
+# Styling the graph with a title, a legend etc
 
 ax.set_title('How Wage Growth Responds to Shocks')
 ax.set_xlabel('Periods')
@@ -485,3 +528,5 @@ plt.show()
 
 
 ```
+
+# ARIMA - Testing Predictive Power
