@@ -214,12 +214,18 @@ sns.regplot(
 plt.title('Modelling the Phillips Curve (In Theory)')
 plt.show()
 
-
 ```
 
 
 # The OLS Regression 
 ```{python}
+
+
+# Dropping the 4 NaN values at the start of the wage column 
+# This is because the data starts at 2000 so there's obviously no data for 
+# the first year's quarters
+
+ols_regression_df = ols_regression_df.dropna()
 
 ols_regression_df = analysis_df.drop('Date', axis = 1)
 
@@ -232,10 +238,6 @@ assert dep_var in ols_regression_df.columns, "'Wage Growth(%)' is not recognsied
 for column in indep_var:
     assert column in ols_regression_df.columns, f"'{column}' is not recognised"
 
-# Dropping the 4 NaN values at the start of the wage column 
-# This is because the data starts at 2000 so there's obviously no data for the first year's quarters
-
-ols_regression_df = ols_regression_df.dropna()
 
 # Creating my Y and X values for the regression 
 
@@ -374,13 +376,15 @@ Next is calculating the variance inflation factors for the regressors, so that I
 ## First Differencing and ADF Tests
 ```{python}
 
-stationary_df = ols_regression_df.copy()
-stationary_df = stationary_df.diff().dropna()
+from statsmodels.tsa.stattools import adfuller
+
+vecm_df = ols_regression_df.copy()
+stationary_df = vecm_df.diff().dropna()
 
 def adf_test(df):
     adf_results = {}
     for column in stationary_df.columns:
-        result = adfuller(stationary_df[column].dropna(), maxlag = 4)
+        result = adfuller(stationary_df[column].dropna(), maxlag = 5)
         adf_results[column] = {
             'ADF Statistic': result[0],
             'p-value': result[1],
@@ -406,18 +410,78 @@ for column, result in adf_results.items():
 ## Running Cointegration Test
 ```{python}
 
-from statsmodels.tsa.vector_ar.vecm import coint_johansen
+from statsmodels.tsa.vector_ar.vecm import *
 
-lag_length = 3  
-det_order = 0  
+coint_rank_test = select_coint_rank(vecm_df, 0, 4)
 
-# Run the Johansen Cointegration test
-johansen_test = coint_johansen(stationary_df, det_order, lag_length)
+coint_rank_test.summary()
 
-# Print the trace statistics and critical values
-print("Trace Statistic:")
-print(johansen_test.lr1) 
-print("\nCritical Values (90%, 95%, 99%):")
-print(johansen_test.cvt)  
+```
+
+## The VECM Results
+
+```{python}
+
+stationary_df['Date'] = analysis_df['Date']
+stationary_df.set_index('Date', inplace = True)
+
+vecm_model = VECM(stationary_df, deterministic = 'co', k_ar_diff = 3, coint_rank = 2)
+
+vecm_results = vecm_model.fit()
+vecm_results.beta[:, 0]
+
+print(vecm_results.summary())
+
+
+```
+
+### Diagnostic Checks
+
+```{python}
+
+from statsmodels.graphics.tsaplots import plot_acf
+from scipy import stats
+
+wage_residuals = vecm_results.resid[:, 0]
+
+# Plot ACF of residuals
+plot_acf(wage_residuals)
+plt.show()
+
+
+
+stat, p_value = stats.shapiro(wage_residuals)
+print(f"Shapiro-Wilk Test: Statistics = {stat}, p-value = {p_value}")
+
+
+```
+
+### Impulse Response Functions
+
+```{python}
+
+num_periods = 25
+
+first_row_irfs = ir.irfs[:, 0, :] 
+
+
+fig, ax = plt.subplots(figsize=(12, 8))
+
+var_names = ['Wage Growth', 'Bank Rate', 'Inflation', 'Unemployment', 'OECD Economic Growth', 'Gvt Spending Growth' ]
+
+for i in range(first_row_irfs.shape[1]):
+    
+    ax.plot(first_row_irfs[:, i], label = f'Shock to variable {var_names[i]}')
+
+
+ax.set_title('How Wage Growth Responds to Shocks')
+ax.set_xlabel('Periods')
+ax.set_ylabel('Response')
+ax.legend()
+plt.grid(True)
+plt.show()
+
+
+
 
 ```
