@@ -404,7 +404,6 @@ for column, result in adf_results.items():
     
     print(f"Lags Used: {result['Lags Used']}")
     
-    print(f"Critical Values: {result['Critical Values']}")
 ```
 
 ## Running Cointegration Test
@@ -430,7 +429,10 @@ coint_rank_test.summary()
 # In case I want to do forecasting and 
 
 stationary_df['Date'] = analysis_df['Date']
-stationary_df.set_index('Date', inplace = True)
+stationary_df = stationary_df.set_index('Date')
+
+stationary_df = stationary_df.asfreq(stationary_df.index.freq)
+stationary_df.index = stationary_df.index.to_timestamp()
 
 # Specifying the models parameters and fitting the model, and printing out the results
 
@@ -439,6 +441,7 @@ vecm_model = VECM(stationary_df, deterministic = 'co', k_ar_diff = 3, coint_rank
 vecm_results = vecm_model.fit()
 
 print(vecm_results.summary())
+
 
 
 ```
@@ -457,6 +460,7 @@ wage_residuals = vecm_results.resid[:, 0]
 
 # Plot ACF of residuals
 plot_acf(wage_residuals)
+plt.title('Autocorrelation of Wage Growth Residuals')
 plt.show()
 
 # Running a Shapiro-Wilk test for normality in the residuals
@@ -464,7 +468,6 @@ plt.show()
 
 stat, p_value = stats.shapiro(wage_residuals)
 print(f"Shapiro-Wilk Test: Statistics = {stat}, p-value = {p_value}")
-
 
 ```
 
@@ -529,4 +532,95 @@ plt.show()
 
 ```
 
-# ARIMA - Testing Predictive Power
+
+# ARIMA - Testing Predictive Power of the Model
+
+```{python}
+
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.metrics import mean_squared_error
+
+# Set the period I'm going to be forecasting
+
+testing_timeframe = 8
+
+# Create the test and train datasets
+
+arimax_train = stationary_df[:-testing_timeframe]
+arimax_test  = stationary_df[-testing_timeframe:]
+
+
+# Define the exogenous variables
+exog_arimax_train = arimax_train[['Bank Rate(%)',\
+    'Inflation(%)','Unemployment Rate(%)',\
+    'Gvt Expenditure Growth(%)', 'OECD Economic Growth(%)']]
+
+exog_arimax_test  = arimax_test[['Bank Rate(%)',\
+    'Inflation(%)','Unemployment Rate(%)',\
+    'Gvt Expenditure Growth(%)', 'OECD Economic Growth(%)']]
+
+# Creates and fits the model with the appropriate parameters
+arimax_model = ARIMA(arimax_train['Wage Growth(%)'],  
+                    order = (4,0,1),
+                    exog = exog_arimax_train
+                   ).fit()
+
+print(arimax_model.summary())
+print('\n')
+
+
+
+# Creates forecasts on training set 
+
+forecasts_on_train = arimax_model.predict()
+
+# Creates forecasts on test set
+
+forecasts_on_test  = arimax_model.forecast(len(arimax_test), exog = exog_arimax_test)
+
+# Calculate the mean error on the test set
+mean_error = np.sqrt(mean_squared_error(arimax_test['Wage Growth(%)'], forecasts_on_test))
+
+# Print the mean error
+print('The mean error is: ', mean_error)
+
+```
+
+## Diagnostic Check
+```{python}
+
+arimax_model.plot_diagnostics(figsize = (14,10))
+plt.show()
+
+
+
+```
+
+
+## Forecasting
+```{python}
+
+# Plotting the train and test data against their corresponding forecasts
+
+plt.figure(figsize=(16,4))
+plt.plot(arimax_train['Wage Growth(%)'], label="Actual")
+plt.plot(forecasts_on_train, label="Predicted")
+
+plt.title('The Forecast of the Training Set vs the Actual Data')
+plt.xlabel('Year')
+plt.ylabel('% Change')
+plt.legend()
+
+# Repeating for test data, where the model is really tested
+plt.figure(figsize=(16,4))
+plt.plot(arimax_test['Wage Growth(%)'], label="Actual")
+plt.plot(forecasts_on_test, label="Predicted")
+
+plt.title('The Forecast for the Unseen Test Data')
+plt.xlabel('Date')
+plt.ylabel('% Change')
+plt.legend()
+plt.show()
+
+
+```
