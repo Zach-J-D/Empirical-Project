@@ -37,9 +37,12 @@ from functools import reduce
 
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools import add_constant
+
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
+from scipy import stats
+from statsmodels.tsa.stattools import grangercausalitytests
 
 # Since the wage and interest rate data was monthly, have to adjust it
 
@@ -356,7 +359,7 @@ Next is calculating the variance inflation factors for the regressors, so that I
 
 
 
-# VECM
+# Setup For ARIMAX
 ## First Differencing and ADF Tests
 ```{python}
 
@@ -364,8 +367,8 @@ from statsmodels.tsa.stattools import adfuller
 
 # Creating a new dataframe to use for first-differencing and VECM tests
 
-vecm_df = ols_regression_df.copy()
-stationary_df = vecm_df.diff().dropna()
+copy_df = ols_regression_df.copy()
+stationary_df = copy_df.diff().dropna()
 
 # Runs the ADF(Augmented Dickey-Fuller) test on every column
 
@@ -406,132 +409,16 @@ for column, result in adf_results.items():
     
 ```
 
-## Running Cointegration Test
 ```{python}
 
-from statsmodels.tsa.vector_ar.vecm import *
-
-# Running a cointegration test to make sure VECM is appropriate
-
-coint_rank_test = select_coint_rank(vecm_df, 0, 4)
-
-# Prints out a table with p-values and t-stats
-
-coint_rank_test.summary()
-
-
-```
-
-## The VECM Results
-
-```{python}
-
-# In case I want to do forecasting and 
+# For forecasting purposes  
 
 stationary_df['Date'] = analysis_df['Date']
 stationary_df = stationary_df.set_index('Date')
 
 stationary_df = stationary_df.asfreq(stationary_df.index.freq)
 stationary_df.index = stationary_df.index.to_timestamp()
-
-# Specifying the models parameters and fitting the model, and printing out the results
-
-vecm_model = VECM(stationary_df, deterministic = 'co', k_ar_diff = 3, coint_rank = 2)
-
-vecm_results = vecm_model.fit()
-
-print(vecm_results.summary())
-
-
-
 ```
-
-### Diagnostic Checks
-
-```{python}
-
-from statsmodels.graphics.tsaplots import plot_acf
-from scipy import stats
-from statsmodels.tsa.stattools import grangercausalitytests
-
-# Taking the residuals from the wage equation as its the one of interest
-
-wage_residuals = vecm_results.resid[:, 0]
-
-# Plot ACF of residuals
-plot_acf(wage_residuals)
-plt.title('Autocorrelation of Wage Growth Residuals')
-plt.show()
-
-# Running a Shapiro-Wilk test for normality in the residuals
-# Jarque-Bera test required exog and I have none since VECM takes all variables as endog
-
-stat, p_value = stats.shapiro(wage_residuals)
-print(f"Shapiro-Wilk Test: Statistics = {stat}, p-value = {p_value}")
-
-```
-
-### Granger-Causality
-```{python}
-
-# Setting max lags to be used
-
-max_lag = 4
-
-# Running a loop through every column 
-# Now can individually examine the causal relationships
-
-for col in stationary_df.columns:
-    if col != 'Wage Growth':
-        
-        print(f'\nTesting if {col} Granger-causes Wage Growth:')
-        
-        grangercausalitytests(stationary_df[['Wage Growth(%)', col]], maxlag = max_lag)
-
-
-```
-
-### Impulse Response Functions
-
-```{python}
-
-# Setting number of years going to examine for the shock
-
-num_periods = 12
-
-ir = vecm_results.irf(periods = num_periods)
-
-# Only want the first row of IRFs since that's the wage growth row
-
-first_row_irfs = ir.irfs[:, 0, :] 
-
-# Setting up the plot and the names
-
-fig, ax = plt.subplots(figsize = (12, 8))
-
-var_names = ['Wage Growth', 'Bank Rate', 'Inflation', 'Unemployment', 'OECD Economic Growth', 'Gvt Spending Growth' ]
-
-# Loops through columns and their shocks to wage growth
-
-for i in range(first_row_irfs.shape[1]):
-    
-    ax.plot(first_row_irfs[:, i], label = f'Shock to variable {var_names[i]}')
-
-
-# Styling the graph with a title, a legend etc
-
-ax.set_title('How Wage Growth Responds to Shocks')
-ax.set_xlabel('Periods')
-ax.set_ylabel('Response')
-ax.legend()
-plt.grid(True)
-plt.show()
-
-
-
-
-```
-
 
 # ARIMA - Testing Predictive Power of the Model
 
@@ -624,3 +511,26 @@ plt.show()
 
 
 ```
+
+
+# Granger-Causality
+```{python}
+
+# Setting max lags to be used
+
+max_lag = 4
+
+# Running a loop through every column 
+# Now can individually examine the causal relationships
+
+for col in stationary_df.columns:
+    if col != 'Wage Growth':
+        
+        print(f'\nTesting if {col} Granger-causes Wage Growth:')
+        
+        grangercausalitytests(stationary_df[['Wage Growth(%)', col]], maxlag = max_lag)
+
+
+```
+
+# Comparing OLS, ARIMAX and Granger-Causality
