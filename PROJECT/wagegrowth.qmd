@@ -1,0 +1,479 @@
+---
+title: '21st Century Real Wage Growth in the UK'
+format:
+    pdf:
+        toc: true
+        fontsize: 10pt
+        geometry: margin=0.6in
+---
+# Introduction  
+
+
+# Importing the Data
+```{python}
+# Importing the relevant modules and tools necessary
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import statsmodels.api as sm
+
+from pathlib import Path
+import matplotlib.pyplot as plt 
+from functools import reduce
+
+from statsmodels.regression.linear_model import OLS
+from statsmodels.tools import add_constant
+
+from statsmodels.stats.diagnostic import het_breuschpagan
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+from scipy import stats
+from statsmodels.tsa.stattools import grangercausalitytests
+
+# Since the wage and interest rate data was monthly, have to adjust it
+
+# Involves resampling this data into quarterly format for analysis later on
+
+# For wages, took the mean of the period
+# For interest rates, took the rate at the end of the quarter
+
+wages_path = Path('Data') / 'wages.csv'
+wages_df = pd.read_csv(wages_path)
+wages_df['Date'] = pd.to_datetime(wages_df['Date'], format = 'mixed')
+
+wages_df.set_index('Date', inplace = True)
+quarterly_wages_df = wages_df.resample('QE-MAR').mean()
+quarterly_wages_df.index = quarterly_wages_df.index.to_period('Q')
+
+# Repeating for bank rate
+
+rates_path = Path('Data') / 'interest_rates.csv'
+rates_df = pd.read_csv(rates_path)
+rates_df['Date'] = pd.to_datetime(rates_df['Date'], format = 'mixed')
+
+rates_df.set_index('Date', inplace = True)
+quarterly_rates_df = rates_df.resample('QE-MAR').last()
+quarterly_rates_df.index = quarterly_rates_df.index.to_period('Q')
+
+# Creating the first dataframe, joining on the 'Date'column
+
+first_df = pd.merge(quarterly_wages_df, quarterly_rates_df, on = ['Date'])
+
+
+# Since the rest of the data was quarterly and in a similar format
+
+# Wrote a function that could sort and create the dataframesy
+# Takes file path, reads in data, much of the data was 2000 Q1
+
+# However this isn't recognised and requires 2000-Q1 format instead
+# If data was 2000-Q1, nothing is changed 
+
+def create_df(dataset, column = 'Date', folder = 'Data'):
+    
+    dataset_path = Path(folder) / dataset
+    
+    try:
+        new_df = pd.read_csv(dataset_path)
+    
+    except FileNotFoundError:
+        print(f'File {dataset} not found in folder {folder}')
+    
+    if column in new_df.columns:
+        new_df[column] = pd.PeriodIndex((new_df[column].str.replace(' ', '-')), freq = 'Q')
+    
+    return new_df
+
+
+# Importing the rest of the data into dataframes
+
+inflation_df = create_df('inflation.csv')
+unemployment_df = create_df('unemployment.csv')
+OECD_growth_df = create_df('OECD_growth.csv')
+gvt_spending_df = create_df('gvt_spending.csv')
+
+```
+
+
+## Creating DataFrames
+```{python}
+# Creating a dataframe with real (inflation adjusted) values in for future use 
+
+real_variables_df = pd.merge(first_df, inflation_df, on = ['Date'])
+
+real_variables_df['Real Wage Growth(%)'] = (real_variables_df['Wage Growth(%)'] - real_variables_df['Inflation(%)'])
+
+real_variables_df['Real Interest Rate(%)'] = (real_variables_df['Bank Rate(%)'] - real_variables_df['Inflation(%)'])
+
+# First going to gather all dataframes
+
+all_dfs = [first_df, inflation_df, unemployment_df, gvt_spending_df, OECD_growth_df]
+
+# Then perform a merge on the 'Date' column 
+
+analysis_df = reduce(lambda left, right: pd.merge(left, right, on = ['Date'], how ='inner'), all_dfs)
+
+analysis_df = analysis_df.dropna()
+
+analysis_df
+
+```
+
+# How Wage Growth Moves With Key Variables
+
+## Inflation 
+
+```{python}
+
+# Setting the size of the plot
+
+plt.figure(figsize = (12, 10))
+
+# Using seaborn to plot a scatterplot with a line of best fit
+
+sns.regplot(
+    x = analysis_df['Inflation(%)'],
+    y = analysis_df['Wage Growth(%)'],
+    line_kws = {'color': 'red', 'linewidth': 1.5}
+)
+
+# Giving it a title
+
+plt.title('Wage Growth vs Inflation')
+plt.axhline(0, color = 'green', linestyle = '--')
+plt.show()
+
+# Calculating the pearsons correlation coefficient
+
+inflation_corr = analysis_df['Wage Growth(%)'].corr(analysis_df['Inflation(%)'])
+
+# Printing the coefficient 
+
+print(f'The pearsons correlation coefficient is {inflation_corr}')
+
+
+```
+
+
+
+## Real Interest Rates
+```{python}
+
+plt.figure(figsize = (10, 8))
+
+# Converting 'Date' column to datetime so it can plotted
+
+real_variables_df['Date'] = pd.PeriodIndex(real_variables_df['Date'], freq = 'Q').to_timestamp()
+
+# Looping through the columns in the dataframe to plot both time series together
+
+for col in ['Real Wage Growth(%)', 'Real Interest Rate(%)']:
+    plt.plot(real_variables_df['Date'], real_variables_df[col]\
+        , label = col)
+
+
+# Customising the graph
+
+plt.title('Real Wage Growth and Real Interest Rates')
+plt.xlabel('Year')
+plt.ylabel('(%)')
+plt.legend()
+plt.axhline(0, color = 'black', linestyle = '--')
+plt.show()
+
+```
+
+
+
+
+# The OLS Regression 
+```{python}
+
+
+# Dropping the 4 NaN values at the start of the wage column 
+# This is because the data starts at 2000 so there's obviously no data for 
+# the first year's quarters
+
+ols_regression_df = analysis_df.copy()
+ols_regression_df.dropna()
+
+ols_regression_df = analysis_df.drop('Date', axis = 1)
+
+# Catergorising my variables and ensuring the columns exist
+
+dep_var = 'Wage Growth(%)'
+indep_var = ['Bank Rate(%)', 'Inflation(%)', 'Unemployment Rate(%)', 'OECD Economic Growth(%)', 'Gvt Expenditure Growth(%)']
+
+assert dep_var in ols_regression_df.columns, "'Wage Growth(%)' is not recognsied"
+for column in indep_var:
+    assert column in ols_regression_df.columns, f"'{column}' is not recognised"
+
+
+# Creating my Y and X values for the regression 
+
+Y = ols_regression_df[dep_var]
+X = ols_regression_df[indep_var]
+
+
+# Runinng the OLS regression and printing the results
+
+ols_regression = OLS(Y, add_constant(X)).fit(cov_type = 'HC1')  
+print(ols_regression.summary())
+
+```
+
+
+## Validation Tests 
+
+### Q-Q plot for normality checks
+```{python}
+
+# Plotting a Q-Q plot to test the normality of my residuals
+
+sm.qqplot(ols_regression.resid, line='45', fit=True)
+plt.title('Q-Q Plot for the Residuals')
+
+
+```
+
+### Bootstrapping Confidence Intervals
+```{python}
+
+# Setup for bootstrapping, including how many times to repeat the process
+
+B = 1000
+n = len(ols_regression_df)
+
+# Creating an empty list to append to later
+
+results_boot_list = []
+
+# Writing a function that repeats the OLS as many times as specified
+# Then, stores the coefficients
+
+for i in range (B):
+    boot_df = ols_regression_df.sample(n, replace = True)
+    
+    indep_boot = boot_df[indep_var]
+    
+    dep_boot = boot_df[dep_var]
+    
+    ols_boot = OLS(dep_boot, add_constant(indep_boot)).fit()
+    
+    results_boot_list.append(ols_boot.params.values)
+
+
+# The dataframe with the initial bootstrapping results
+
+results_boot_df = pd.DataFrame(results_boot_list, columns = ['const'] + indep_var)
+
+# Getting my confidence intervals from the coefficients
+
+CI_lower = results_boot_df.quantile(0.025)
+CI_upper = results_boot_df.quantile(0.975)
+
+# Table for the data so that the confidence intervals are columns
+
+CI_boot = pd.concat([CI_lower, CI_upper], axis = 1)
+CI_boot.columns = [' Bootstrap 0.025', ' Bootstrap 0.975']
+
+# Getting the confidence intervals from my OLS for comparison
+
+CI_ols = ols_regression.conf_int(alpha = 0.05)
+CI_ols.columns = ['OLS 0.025', 'OLS 0.975']
+
+# Joining the two datasets into one table
+
+CI_merged = pd.concat([CI_boot, CI_ols], axis = 1)
+CI_merged
+
+
+```
+
+
+### Heteroskedasticity test
+```{python}
+
+# Running a heteroskedasticity test 
+
+bp_test = het_breuschpagan(ols_regression.resid, ols_regression.model.exog)
+bp_test
+
+```
+
+
+### Multicollinearity test
+```{python}
+
+# Running a test for multicollnearity
+
+X_with_constant = add_constant(X)
+vif_test = pd.DataFrame()
+vif_test['Variable'] = X_with_constant.columns
+vif_test['VIF'] = [variance_inflation_factor(X_with_constant, i)
+                   for i in range(X_with_constant.shape[1])]
+
+
+vif_test
+
+```
+
+
+## Discussion of the OLS Results 
+
+
+# Setup For ARIMAX
+## First Differencing and ADF Tests
+```{python}
+
+from statsmodels.tsa.stattools import adfuller
+
+# Creating a new dataframe to use for first-differencing and VECM tests
+
+copy_df = ols_regression_df.copy()
+stationary_df = copy_df.diff().dropna()
+
+# Runs the ADF(Augmented Dickey-Fuller) test on every column
+
+# Returns the results into a previously empty list
+# Purpose is to make sure data is stationary after first-differencing
+
+def adf_test(df):
+    adf_results = {}
+    
+    for column in df.columns:
+        result = adfuller(df[column].dropna(), maxlag = 5)
+        
+        adf_results[column] = {
+            'ADF Statistic': result[0],
+            'p-value': result[1],
+            'Lags Used': result[2],
+            'Number of Observations Used': result[3],
+            'Critical Values': result[4]
+        }
+        
+    return adf_results
+
+# Running it on the stationary dataframe
+
+adf_results = adf_test(stationary_df)
+
+# Printing out the results from the ADF test 
+# Can inspect lags used and the relevant t-stats and p-values
+
+for column, result in adf_results.items():
+    print(f"\nResults for {column}:")
+    
+    print(f"ADF Statistic: {result['ADF Statistic']}")
+    
+    print(f"p-value: {result['p-value']}")
+    
+    print(f"Lags Used: {result['Lags Used']}")
+    
+```
+
+
+
+
+```{python}
+
+# For forecasting purposes  
+
+stationary_df['Date'] = analysis_df['Date']
+stationary_df = stationary_df.set_index('Date')
+
+stationary_df = stationary_df.asfreq(stationary_df.index.freq)
+stationary_df.index = stationary_df.index.to_timestamp()
+```
+
+# ARIMAX - Testing Predictive Power of the Model
+
+```{python}
+
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.metrics import mean_squared_error
+
+# Set the period I'm going to be forecasting
+
+testing_timeframe = 8
+
+# Create the test and train datasets
+
+arimax_train = stationary_df[:-testing_timeframe]
+arimax_test  = stationary_df[-testing_timeframe:]
+
+
+# Define the exogenous variables
+exog_arimax_train = arimax_train[['Bank Rate(%)',\
+    'Inflation(%)','Unemployment Rate(%)',\
+    'Gvt Expenditure Growth(%)', 'OECD Economic Growth(%)']]
+
+exog_arimax_test  = arimax_test[['Bank Rate(%)',\
+    'Inflation(%)','Unemployment Rate(%)',\
+    'Gvt Expenditure Growth(%)', 'OECD Economic Growth(%)']]
+
+# Creates and fits the model with the appropriate parameters
+arimax_model = ARIMA(arimax_train['Wage Growth(%)'],  
+                    order = (2,0,1),
+                    exog = exog_arimax_train
+                   ).fit()
+
+print(arimax_model.summary())
+
+# Creates forecasts on training set 
+
+forecasts_on_train = arimax_model.predict()
+
+# Creates forecasts on test set
+
+forecasts_on_test  = arimax_model.forecast(len(arimax_test), exog = exog_arimax_test)
+
+```
+
+## Diagnostic Check
+```{python}
+
+arimax_model.plot_diagnostics(figsize = (14,10))
+plt.show()
+
+
+```
+
+## Forecasting
+```{python}
+
+# Plotting the train and test data against their corresponding forecasts
+
+plt.figure(figsize=(16,4))
+plt.plot(arimax_train['Wage Growth(%)'], label="Actual")
+plt.plot(forecasts_on_train, label="Predicted")
+
+plt.title('The Forecast of the Training Set vs the Actual Data')
+plt.xlabel('Year')
+plt.ylabel('% Change')
+plt.legend()
+
+# Repeating for test data, where the model is really tested
+plt.figure(figsize=(16,4))
+plt.plot(arimax_test['Wage Growth(%)'], label="Actual")
+plt.plot(forecasts_on_test, label="Predicted")
+
+plt.title('The Forecast for the Unseen Test Data')
+plt.xlabel('Date')
+plt.ylabel('% Change')
+plt.legend()
+plt.show()
+
+
+```
+
+
+## Discussing the ARIMAX Results, and Comparing to the OLS 
+
+# Final Words
+
+ 
+
+
+
+
