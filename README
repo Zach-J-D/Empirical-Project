@@ -1,22 +1,69 @@
 ---
-Title: TBD but about real wages
+Title: 21st Century Wage Growth in the UK
 Author: Zach Daykin
 Date: 05/04/2025
 ---
 
 ## Introduction
-Real wages
-- real interest rates
-- profits (to some extent)
-- some measure of productivity (TFP, labor productivity, etc.)
-- spome measure of labor supply (hours worked, employment rate, etc.)
-- some measure of costs to firms that isn't wages e.g. taxes
-- some measure of global economic growth/developement (thinking about trade, globalisation and specialisation)
-- some measure of investment in the UK
 
- 
+The purpose of this project is examine the relationships between wage growth and other macroeconomic variables in the UK in the 21st Century, and whether or not these variables exhibit a causal relationship with wage growth. It does so using an OLS regression, as well as utilising an ARIMAX model.
 
 
+## Repository overview 
+
+The folder is structured as follows:
+
+    - .git
+    - myenv
+    - PROJECT
+        - Data
+        - wagegrowth.qmd
+        - wagegrowth.pdf
+        - requirements.txt
+    - Blog.txt
+    - README
+
+Inside the PROJECT folder, there is the data used for the project inside 'Data', the source code is in wagegrowth.qmd, with a rendered output in wagegrowth.pdf. The requirements.txt file contains the necessary libraries to run the project.
+
+The Blog.txt file contains links to the Github repository, and the hackmd blog post itself.
+
+## Replicating the results
+
+
+To render the project, follow these steps:
+
+1. Install Quarto
+If you don't already have Quarto installed, download it from https://quarto.org/docs/get-started/
+
+2. Create a virtual environment
+From the project folder, create and activate a virtual environment:
+
+WSL:
+python3 -m venv myenv
+source myenv/bin/activate
+
+
+PowerShell:
+python -m venv myenv
+.\myenv\Scripts\Activate.ps1
+
+
+3. Install required Python packages
+
+With the virtual environment activated, install the necessary libraries:
+pip install -r requirements.txt
+
+4. Render the Quarto file
+
+Finally, render the .qmd file:
+quarto render projectcode.qmd
+
+
+## About 
+
+This project was created by Zach Daykin. For any questions or comments, please contact me at zd276@exeter.ac.uk
+
+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
 
 
 
